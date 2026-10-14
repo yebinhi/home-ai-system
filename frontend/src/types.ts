@@ -1,0 +1,9 @@
+export type Section = 'overview' | 'energy' | 'security' | 'assistant' | 'automation' | 'history' | 'settings';
+export type Health = { ok: boolean; mode: string; device_writes: boolean; time: string };
+export type Config = { mode: string; export_enabled: boolean; vision_enabled: boolean; device_writes_enabled: boolean; planning_hour_local: number; timezone: string; pv_kwp: number; battery_capacity_kwh: number };
+export type Status = { soc_pct: number; solar_kw: number; load_kw: number; grid_kw: number; battery_kw: number; source: string; timestamp: string };
+export type Generation = { today_kwh: number; month_kwh: number; cumulative_kwh: number; source: string; timestamp: string };
+export type PlanSlot = { start: string; soc_start_pct: number; soc_end_pct: number; import_kwh: number; export_kwh: number; grid_charge_kwh: number; solar_charge_kwh: number; battery_home_kwh: number; mode_hint: 'SelfUse' | 'Feedin' | 'ForceCharge' | 'Backup' };
+export type Plan = { id: string; created_at: string; source: string; simulated: boolean; forecast_quality: string; executable: boolean; horizon_hours: number; step_minutes: number; predicted_import_cost_gbp: number; predicted_export_revenue_gbp: number; predicted_degradation_cost_gbp: number; predicted_net_cost_gbp: number; notes: string[]; slots: PlanSlot[] };
+export type Event = { id: string; timestamp: string; camera: string; kind: string; severity: 'low'|'medium'|'high'; summary: string; source: string };
+export type HistoryItem = { id: string; created_at: string; source: string; net_cost_gbp: number; horizon_hours: number; executable: boolean };

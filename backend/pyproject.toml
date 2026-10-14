@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "home-ai-platform"
+version = "0.1.0"
+description = "Home AI hub for Fox ESS, Octopus and UniFi Protect"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic-settings>=2.5,<3",
+  "httpx>=0.27,<1",
+  "numpy>=2,<3",
+  "scipy>=1.13,<2",
+  "fastmcp>=4.0.11,<5",
+  "langchain[mcp]>=1.4,<2",
+  "langchain-openai>=1.0,<2",
+  "openai>=2.0,<4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
+
+[tool.setuptools.packages.find]
+include = ["homeai*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
