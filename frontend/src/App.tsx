@@ -195,19 +195,231 @@ function Schedule({ plan }: { plan: Plan }) {
   );
 }
 
-function EventList({ events }: { events: Event[] }) {
+function clampDock(x: number, y: number, width: number, height: number) {
+  const maxX = Math.max(8, window.innerWidth - width - 8);
+  const maxY = Math.max(8, window.innerHeight - height - 8);
+  return { x: Math.min(Math.max(8, x), maxX), y: Math.min(Math.max(8, y), maxY) };
+}
+
+function AssistantDock({
+  open, onOpen, messages, busy, input, onInput, onAsk, thread,
+}: {
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  messages: { from: 'user' | 'agent'; text: string }[];
+  busy: boolean;
+  input: string;
+  onInput: (value: string) => void;
+  onAsk: (event: React.FormEvent) => void;
+  thread: React.RefObject<HTMLDivElement | null>;
+}) {
+  const dock = React.useRef<HTMLDivElement>(null);
+  const drag = React.useRef<{ id: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const [placed, setPlaced] = React.useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = React.useState(false);
+
+  React.useEffect(() => {
+    if (window.innerWidth > 700) return;
+    if (!open) {
+      setPlaced(null);
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const el = dock.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setPlaced(clampDock(
+        (window.innerWidth - rect.width) / 2,
+        (window.innerHeight - rect.height) / 2,
+        rect.width,
+        rect.height,
+      ));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  React.useEffect(() => {
+    const el = dock.current;
+    if (!el || !placed || window.innerWidth <= 700) return;
+    const rect = el.getBoundingClientRect();
+    const next = clampDock(placed.x, placed.y, rect.width, rect.height);
+    if (next.x !== placed.x || next.y !== placed.y) setPlaced(next);
+  }, [open, placed]);
+
+  React.useEffect(() => {
+    const keepInside = () => {
+      const el = dock.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const next = clampDock(rect.left, rect.top, rect.width, rect.height);
+      if (Math.abs(next.x - rect.left) > 1 || Math.abs(next.y - rect.top) > 1) setPlaced(next);
+    };
+    window.addEventListener('resize', keepInside);
+    return () => window.removeEventListener('resize', keepInside);
+  }, []);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('input, textarea, form, .dock-bar > button')) return;
+    if (open && !target.closest('.dock-bar')) return;
+    const el = dock.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+    setDragging(true);
+    el.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const state = drag.current;
+    const el = dock.current;
+    if (!state || state.id !== event.pointerId || !el) return;
+    const dx = event.clientX - state.x;
+    const dy = event.clientY - state.y;
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) state.moved = true;
+    const rect = el.getBoundingClientRect();
+    setPlaced(clampDock(state.left + dx, state.top + dy, rect.width, rect.height));
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const state = drag.current;
+    if (!state || state.id !== event.pointerId) return;
+    drag.current = null;
+    setDragging(false);
+    if (dock.current?.hasPointerCapture(event.pointerId)) dock.current.releasePointerCapture(event.pointerId);
+    const dx = event.clientX - state.x;
+    const dy = event.clientY - state.y;
+    const moved = state.moved || Math.abs(dx) > 5 || Math.abs(dy) > 5;
+    if (moved) {
+      const el = dock.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setPlaced(clampDock(state.left + dx, state.top + dy, rect.width, rect.height));
+      return;
+    }
+    if (!open) onOpen(true);
+  };
+
   return (
-    <div className="event-list">
-      {events.map((event) => (
-        <article key={event.id} className={`sev-${event.severity}`}>
-          {event.cover && <img src={event.cover} alt="" />}
-          <div>
-            <strong>{event.camera}</strong>
-            <span>{clock(event.timestamp)} · {event.kind.replaceAll('_', ' ')} · {event.severity}</span>
-            <p>{event.summary}</p>
+    <div
+      className={`dock ${open ? 'open' : ''} ${placed ? 'placed' : ''} ${dragging ? 'dragging' : ''}`}
+      style={placed ? { left: placed.x, top: placed.y } : undefined}
+      ref={dock}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      {open ? (
+        <>
+          <div className="dock-bar">
+            <img className="dock-face" src="/avatars/assistant.jpg" alt="" />
+            <span className="dock-grip" role="button" aria-label="Move assistant">Assistant</span>
+            <button type="button" aria-label="Minimize assistant" onClick={() => onOpen(false)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
+            </button>
           </div>
-        </article>
-      ))}
+          <div className="chat" ref={thread}>
+            {messages.length === 0 && <p className="hint">Ask about battery, solar, today’s generation, prices, or recorded events.</p>}
+            {messages.map((message, index) => (
+              <p key={index} className={`msg ${message.from}`}>
+                <img src={message.from === 'user' ? '/avatars/you.jpg' : '/avatars/assistant.jpg'} alt="" />
+                <span>{message.text}</span>
+              </p>
+            ))}
+            {busy && (
+              <p className="msg agent">
+                <img src="/avatars/assistant.jpg" alt="" />
+                <span>Thinking…</span>
+              </p>
+            )}
+          </div>
+          <form onSubmit={onAsk}>
+            <input value={input} onChange={(event) => onInput(event.target.value)} placeholder="Ask about your home" aria-label="Message" />
+            <button type="submit" className="primary" disabled={busy || !input.trim()}>Send</button>
+          </form>
+        </>
+      ) : (
+        <button type="button" className="dock-chip" aria-label="Open assistant">
+          <img className="dock-face" src="/avatars/assistant.jpg" alt="" />
+          Assistant
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EventReel({ events }: { events: Event[] }) {
+  const scroller = React.useRef<HTMLDivElement>(null);
+  const drag = React.useRef<{ pointer: number; x: number; left: number } | null>(null);
+  const [index, setIndex] = React.useState(0);
+  const [dragging, setDragging] = React.useState(false);
+
+  const sync = () => {
+    const el = scroller.current;
+    if (!el || el.clientWidth === 0) return;
+    setIndex(Math.min(events.length - 1, Math.max(0, Math.round(el.scrollLeft / el.clientWidth))));
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    const el = scroller.current;
+    if (!el) return;
+    drag.current = { pointer: event.pointerId, x: event.clientX, left: el.scrollLeft };
+    setDragging(true);
+    el.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = scroller.current;
+    const state = drag.current;
+    if (!el || !state || state.pointer !== event.pointerId) return;
+    el.scrollLeft = state.left - (event.clientX - state.x);
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = scroller.current;
+    const state = drag.current;
+    if (!el || !state || state.pointer !== event.pointerId) return;
+    drag.current = null;
+    setDragging(false);
+    if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
+    const width = el.clientWidth || 1;
+    const dx = event.clientX - state.x;
+    let next = Math.round(state.left / width);
+    if (dx <= -48) next += 1;
+    else if (dx >= 48) next -= 1;
+    next = Math.max(0, Math.min(events.length - 1, next));
+    el.scrollTo({ left: next * width, behavior: 'smooth' });
+    setIndex(next);
+  };
+
+  return (
+    <div className="event-reel">
+      <div
+        className={`event-reel-track ${dragging ? 'dragging' : ''}`}
+        ref={scroller}
+        onScroll={sync}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        aria-label="Security events. Swipe left for the next one."
+      >
+        {events.map((event) => (
+          <article key={event.id}>
+            {event.cover ? <img src={event.cover} alt="" draggable={false} /> : <div className="event-photo" />}
+            <p>{event.summary}</p>
+            <span>{event.camera} · {clock(event.timestamp)} · {event.kind.replaceAll('_', ' ')} · {event.severity}</span>
+          </article>
+        ))}
+      </div>
+      {events.length > 1 && (
+        <div className="event-dots" aria-hidden="true">
+          {events.map((event, dot) => <i key={event.id} className={dot === index ? 'on' : ''} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -223,6 +435,7 @@ export default function App() {
   const [chatInput, setChatInput] = React.useState('');
   const [messages, setMessages] = React.useState<{ from: 'user' | 'agent'; text: string }[]>([]);
   const [chatBusy, setChatBusy] = React.useState(false);
+  const [chatOpen, setChatOpen] = React.useState(false);
 
   const update = React.useCallback(async () => {
     const results = await Promise.allSettled([api.health(), api.status(), api.generation(), api.plan(), api.events()]);
@@ -263,9 +476,28 @@ export default function App() {
   };
 
   const thread = React.useRef<HTMLDivElement>(null);
+  const [section, setSection] = React.useState('solar');
   React.useEffect(() => {
     thread.current?.scrollTo({ top: thread.current.scrollHeight });
   }, [messages, chatBusy]);
+  React.useEffect(() => {
+    const nodes = ['solar', 'security']
+      .map((id) => document.getElementById(id))
+      .filter((node): node is HTMLElement => Boolean(node));
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible?.target.id) setSection(visible.target.id);
+    }, { rootMargin: '-15% 0px -50% 0px', threshold: [0.2, 0.5] });
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, []);
+
+  const showSection = (id: string) => {
+    setSection(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const soc = status ? `${Math.round(status.soc_pct)}%` : '—';
   const live = Boolean(health?.ok);
@@ -275,8 +507,35 @@ export default function App() {
   const people = shownEvents.filter((event) => event.kind.includes('person')).length;
   const vehicles = shownEvents.filter((event) => event.kind.includes('vehicle')).length;
 
+  const nav = [
+    ['solar', 'Solar', 'M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM12 2v2M12 20v2M2 12h2M20 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4'],
+    ['security', 'Security', 'M12 3 5 6v6c0 4 2.7 6.8 7 8 4.3-1.2 7-4 7-8V6l-7-3Z'],
+    ['assistant', 'Assistant', 'M5 6h14v9H8l-3 3V6Z'],
+  ] as const;
+
   return (
-    <main className="home">
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="side-brand">
+          <h1>Home</h1>
+          <span className={live ? 'pill' : 'pill down'}><i />{offline ? 'Offline' : demo ? 'Demo' : 'Live'}</span>
+        </div>
+        <nav>
+          {nav.map(([id, label, icon]) => (
+            <button
+              key={id}
+              type="button"
+              className={id === 'assistant' ? (chatOpen ? 'on' : '') : (section === id ? 'on' : '')}
+              onClick={() => (id === 'assistant' ? setChatOpen((value) => !value) : showSection(id))}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d={icon} /></svg>
+              {label}
+            </button>
+          ))}
+        </nav>
+        <button type="button" className="refresh" onClick={() => void update()}>Refresh</button>
+      </aside>
+      <main className="home">
       <header className="top">
         <h1>Home</h1>
         <div className="top-meta">
@@ -287,7 +546,7 @@ export default function App() {
 
       {offline && <p className="banner">Backend is not reachable.</p>}
 
-      <section className="block" aria-label="Solar">
+      <section className="block" id="solar" aria-label="Solar">
         <p className="label">Solar</p>
         <div className="card">
           <div className="metrics">
@@ -318,30 +577,25 @@ export default function App() {
         </div>
       </section>
 
-      <section className="block" aria-label="Security">
+      <section className="block" id="security" aria-label="Security">
         <p className="label">Security</p>
         <div className="card">
           <p className="foot security-line">{shownEvents.length} events · {high} high · {people} {people === 1 ? 'person' : 'people'} · {vehicles} {vehicles === 1 ? 'vehicle' : 'vehicles'}</p>
-          <EventList events={shownEvents} />
+          <EventReel events={shownEvents} />
         </div>
       </section>
 
-      <section className="block" aria-label="Assistant">
-        <p className="label">Assistant</p>
-        <div className="card chat-card">
-          <div className="chat" ref={thread}>
-            {messages.length === 0 && <p className="hint">Ask about battery, solar, today’s generation, prices, or recorded events.</p>}
-            {messages.map((message, index) => (
-              <p key={index} className={message.from}>{message.text}</p>
-            ))}
-            {chatBusy && <p className="agent">Thinking…</p>}
-          </div>
-          <form onSubmit={(event) => void ask(event)}>
-            <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about your home" aria-label="Message" />
-            <button type="submit" className="primary" disabled={chatBusy || !chatInput.trim()}>Send</button>
-          </form>
-        </div>
-      </section>
-    </main>
+      </main>
+      <AssistantDock
+        open={chatOpen}
+        onOpen={setChatOpen}
+        messages={messages}
+        busy={chatBusy}
+        input={chatInput}
+        onInput={setChatInput}
+        onAsk={(event) => void ask(event)}
+        thread={thread}
+      />
+    </div>
   );
 }
