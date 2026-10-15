@@ -10,7 +10,7 @@ from .config import get_settings
 from .db import initialize, latest_plan, recent_events, recent_plans, save_event
 from .models import ChatInput, ChatOutput
 from .integrations.foxess import FoxCloud
-from .services.energy_service import schedule_preview
+from .services.energy_service import plan_for_display, schedule_preview
 from .agents.energy_agent import run_energy_planning
 from .services.scheduler import daily_scheduler_loop
 from .agents.security_agent import record_protect_alarm
@@ -71,7 +71,7 @@ async def raw_telemetry():
 
 @app.get("/api/energy/plan")
 async def energy_plan():
-    plan = latest_plan()
+    plan = plan_for_display()
     return plan.model_dump(mode="json") if plan else {"message": "No plan yet"}
 
 @app.post("/api/energy/plan")

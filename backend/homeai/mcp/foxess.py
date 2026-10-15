@@ -9,7 +9,7 @@ async def get_device_status() -> dict:
 
 @mcp.tool
 async def get_energy_yield() -> dict:
-    """Read today's, this month's, and lifetime generation in kWh. Does not change the device."""
+    """Read today's, this month's, and lifetime PV production in kWh. Does not change the device."""
     return (await FoxCloud().generation()).model_dump(mode="json")
 
 @mcp.tool

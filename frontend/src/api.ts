@@ -14,7 +14,6 @@ export const api = {
   status: () => request<Status>('/api/energy/status'),
   generation: () => request<Generation>('/api/energy/generation'),
   plan: () => request<Plan | {message: string}>('/api/energy/plan'),
-  generatePlan: () => request<Plan>('/api/energy/plan', { method: 'POST' }),
   events: () => request<Event[]>('/api/security/events?limit=30'),
   history: () => request<HistoryItem[]>('/api/energy/history?limit=25'),
   chat: (message: string) => request<{answer: string}>('/api/chat', { method: 'POST', body: JSON.stringify({message}) }),

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from ..config import get_settings
-from ..db import initialize, save_plan
+from ..db import initialize, recent_plans, save_plan
 from ..integrations.foxess import FoxCloud
 from ..integrations.octopus import OctopusRates
 from ..integrations.weather import forecast_kwh
@@ -34,6 +35,47 @@ async def create_plan() -> EnergyPlan:
         plan.notes.append("Export is disabled: MPAN, export tariff and DNO limit must be verified first.")
     save_plan(plan)
     return plan
+
+
+def plan_for_display(now: datetime | None = None) -> EnergyPlan | None:
+    """Each half-hour of the local day keeps the newest saved plan that covered it.
+
+    A new plan starts at the next half-hour, so the latest row alone leaves the
+    morning empty. Older rows stay in the database and fill those hours here.
+    Hours that no saved plan ever covered stay absent.
+    """
+    plans = recent_plans(400)
+    if not plans:
+        return None
+    latest = plans[0]
+    tz = ZoneInfo(get_settings().app_timezone)
+    clock = now.astimezone(tz) if now else datetime.now(tz)
+    midnight = clock.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 26h always lands on the next calendar date, including a 25-hour clock change.
+    day_end = (midnight + timedelta(hours=26)).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    step = timedelta(minutes=30)
+    stitched = []
+    cursor = midnight
+    while cursor < day_end:
+        instant = cursor.astimezone(timezone.utc)
+        slot = _newest_covering(plans, instant)
+        if slot is not None:
+            stitched.append(slot.model_copy(update={"start": instant}))
+        cursor += step
+    if not stitched:
+        return latest
+    return latest.model_copy(update={"slots": stitched})
+
+
+def _newest_covering(plans: list[EnergyPlan], instant: datetime):
+    target = instant.astimezone(timezone.utc)
+    for plan in plans:
+        width = timedelta(minutes=plan.step_minutes or 30)
+        for slot in plan.slots:
+            start = slot.start.astimezone(timezone.utc)
+            if start <= target < start + width:
+                return slot
+    return None
 
 
 def schedule_preview(plan: EnergyPlan) -> dict:

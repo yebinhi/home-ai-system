@@ -57,5 +57,5 @@ def release_scheduler_day(local_date: str):
 def recent_plans(limit: int = 20) -> list[EnergyPlan]:
     """Read the newest simulation records without modifying device state."""
     with _connect() as con:
-        rows = con.execute("SELECT body FROM plans ORDER BY created_at DESC LIMIT ?", (min(limit, 50),)).fetchall()
+        rows = con.execute("SELECT body FROM plans ORDER BY created_at DESC LIMIT ?", (min(limit, 400),)).fetchall()
     return [EnergyPlan.model_validate_json(row[0]) for row in rows]

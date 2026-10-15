@@ -86,7 +86,10 @@ class FoxCloud:
         )
 
     async def generation(self) -> EnergyYield:
-        """Today, month, and lifetime generation in kWh from the plant timezone."""
+        """PV production in kWh: today and this month from the plant report, lifetime from the PV meter.
+
+        Fox's /op/v0/device/generation `today` is inverter output, not the Daily production shown in the app.
+        """
         if self.cfg.mock_mode:
             return EnergyYield(
                 today_kwh=0, month_kwh=0, cumulative_kwh=0, source="SIMULATED",
@@ -96,18 +99,28 @@ class FoxCloud:
         now_ts = time.time()
         if _yield_cache and now_ts - _yield_cache[0] < _YIELD_TTL_SECONDS:
             return _yield_cache[1]
-        data = await self._exchange("GET", "/op/v0/device/generation", params={"sn": self.cfg.fox_device_sn})
-        result = data.get("result") or {}
-
-        def kwh(key: str) -> float:
-            value = result.get(key)
-            if value is None:
-                raise RuntimeError(f"FoxCloud generation did not include {key}")
-            return round(float(value), 3)
-
+        local = datetime.now(ZoneInfo(self.cfg.app_timezone))
+        report = await self._post("/op/v0/device/report/query", {
+            "sn": self.cfg.fox_device_sn,
+            "year": local.year,
+            "month": local.month,
+            "dimension": "month",
+            "variables": ["PVEnergyTotal"],
+        })
+        rows = {row.get("variable"): row.get("values") or [] for row in (report.get("result") or [])}
+        days = rows.get("PVEnergyTotal") or []
+        if local.day - 1 >= len(days):
+            raise RuntimeError("FoxCloud report did not include today's PV production")
+        raw = await self.raw_variables()
+        datas = ((raw.get("result") or [{}])[0].get("datas") or [])
+        lifetime = next((item.get("value") for item in datas if item.get("variable") == "PVEnergyTotal"), None)
+        if lifetime is None:
+            raise RuntimeError("FoxCloud telemetry did not include PVEnergyTotal")
         parsed = EnergyYield(
-            today_kwh=kwh("today"), month_kwh=kwh("month"), cumulative_kwh=kwh("cumulative"),
-            source="FOX_CLOUD", timestamp=datetime.now(ZoneInfo(self.cfg.app_timezone)),
+            today_kwh=round(float(days[local.day - 1]), 3),
+            month_kwh=round(sum(float(value) for value in days), 3),
+            cumulative_kwh=round(float(lifetime), 3),
+            source="FOX_CLOUD", timestamp=local,
         )
         _yield_cache = (now_ts, parsed)
         return parsed

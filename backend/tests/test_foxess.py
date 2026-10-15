@@ -19,6 +19,8 @@ def test_mock_generation_does_not_call_fox():
 
 def test_generation_reads_today_kwh(monkeypatch):
     import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
     from homeai.config import get_settings
     import homeai.integrations.foxess as fox
 
@@ -28,22 +30,30 @@ def test_generation_reads_today_kwh(monkeypatch):
     get_settings.cache_clear()
     fox._yield_cache = None
     calls = {"n": 0}
+    today = datetime.now(ZoneInfo("Europe/London")).day
 
-    async def fake_exchange(_self, method, path, **kwargs):
+    async def fake_post(_self, path, body):
         calls["n"] += 1
-        assert method == "GET"
-        assert path == "/op/v0/device/generation"
-        assert kwargs["params"] == {"sn": "SN1"}
-        return {"errno": 0, "result": {"today": 16.199999, "month": 60, "cumulative": 187.5}}
+        assert path == "/op/v0/device/report/query"
+        assert body["sn"] == "SN1"
+        assert body["dimension"] == "month"
+        assert body["variables"] == ["PVEnergyTotal"]
+        values = [0.0] * 31
+        values[today - 1] = 9.199999
+        return {"errno": 0, "result": [{"variable": "PVEnergyTotal", "unit": "kWh", "values": values}]}
 
-    monkeypatch.setattr(FoxCloud, "_exchange", fake_exchange)
+    async def fake_raw(_self):
+        return {"result": [{"datas": [{"variable": "PVEnergyTotal", "value": 234.3, "unit": "kWh"}]}]}
+
+    monkeypatch.setattr(FoxCloud, "_post", fake_post)
+    monkeypatch.setattr(FoxCloud, "raw_variables", fake_raw)
     first = asyncio.run(FoxCloud().generation())
     second = asyncio.run(FoxCloud().generation())
-    assert first.today_kwh == 16.2
-    assert first.month_kwh == 60
-    assert first.cumulative_kwh == 187.5
+    assert first.today_kwh == 9.2
+    assert first.month_kwh == 9.2
+    assert first.cumulative_kwh == 234.3
     assert first.source == "FOX_CLOUD"
-    assert second.today_kwh == 16.2
+    assert second.today_kwh == 9.2
     assert calls["n"] == 1
     fox._yield_cache = None
     get_settings.cache_clear()

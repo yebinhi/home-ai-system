@@ -1,121 +1,347 @@
 import * as React from 'react';
-import Icon from './icons';
 import { api } from './api';
-import type { Config, Event, Generation, Health, HistoryItem, Plan, Section, Status } from './types';
+import type { Event, Generation, Health, Plan, Status } from './types';
 
-const NAV: {id:Section;label:string;icon:string}[] = [
-  {id:'overview',label:'Overview',icon:'home'},
-  {id:'energy',label:'Energy',icon:'energy'},
-  {id:'security',label:'Security',icon:'shield'},
-  {id:'assistant',label:'Assistant',icon:'chat'},
-  {id:'automation',label:'Automation',icon:'automation'},
-  {id:'history',label:'History',icon:'history'},
-  {id:'settings',label:'Settings',icon:'settings'},
+const kw = (v?: number) => (Number.isFinite(v) ? `${v!.toFixed(2)} kW` : '—');
+const kwh = (v?: number) => (Number.isFinite(v) ? `${v!.toFixed(1)} kWh` : '—');
+const money = (v?: number) =>
+  Number.isFinite(v) ? new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(v!) : '—';
+const clock = (iso: string) => {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' }).format(new Date(iso));
+  } catch {
+    return '—';
+  }
+};
+
+function isPlan(p: Plan | { message: string } | null): p is Plan {
+  return Boolean(p && 'slots' in p && Array.isArray((p as Plan).slots));
+}
+
+const SAMPLE_EVENTS: Event[] = [
+  { id: 'sample-cats', timestamp: '2026-10-15T08:48:00Z', camera: 'Front yard', kind: 'animal', severity: 'low', summary: 'Two cats visited the front yard.', source: 'sample', cover: '/events/cats-0948.jpg' },
+  { id: 'sample-vehicle', timestamp: '2026-10-15T07:41:00Z', camera: 'Driveway', kind: 'vehicle', severity: 'medium', summary: 'A car stopped on the driveway.', source: 'sample', cover: '/events/vehicle-0841.jpg' },
+  { id: 'sample-person', timestamp: '2026-10-15T06:14:00Z', camera: 'Front door', kind: 'person', severity: 'high', summary: 'A person walked up to the front door.', source: 'sample', cover: '/events/person-0714.jpg' },
+  { id: 'sample-parcel-0630', timestamp: '2026-10-15T05:30:00Z', camera: 'Front door', kind: 'package', severity: 'medium', summary: 'A second parcel was left at the door.', source: 'sample', cover: '/events/parcel-0630.jpg' },
+  { id: 'sample-parcel-0530', timestamp: '2026-10-15T04:30:00Z', camera: 'Front door', kind: 'package', severity: 'medium', summary: 'A parcel was delivered at the front door.', source: 'sample', cover: '/events/parcel-0530.jpg' },
+  { id: 'sample-fox', timestamp: '2026-10-15T02:40:00Z', camera: 'Back garden', kind: 'animal', severity: 'low', summary: 'A fox visited the back garden.', source: 'sample', cover: '/events/fox-0340.jpg' },
 ];
-const MOCK_EVENTS: Event[] = [
-  {id:'example-1',camera:'Front Door',kind:'person',severity:'medium',summary:'Illustrative person event. Connect UniFi Protect to receive real events.',source:'DEMO',timestamp:new Date().toISOString()},
-  {id:'example-2',camera:'Driveway',kind:'vehicle',severity:'low',summary:'Illustrative vehicle detection, not a real camera alert.',source:'DEMO',timestamp:new Date(Date.now()-1000*60*92).toISOString()},
-];
-const MODES:Record<string,{label:string;key:string}>={ForceCharge:{label:'Force Charge',key:'charge'},SelfUse:{label:'Self-Use',key:'self'},Feedin:{label:'Feed-in Priority',key:'export'},Backup:{label:'Backup',key:'backup'}};
-const money=(v?:number)=>Number.isFinite(v) ? new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(v!) : '—';
-const kwh=(v?:number)=>Number.isFinite(v)?`${v!.toFixed(1)} kWh`:'—';
-const clock=(iso:string)=> {try {return new Intl.DateTimeFormat('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'}).format(new Date(iso));}catch{return '—';}};
-const shortDate=(iso:string)=>{try{return new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'Europe/London'}).format(new Date(iso));}catch{return '—';}};
-function getGreeting(){const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',hourCycle:'h23'}).format(new Date()));return hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';}
-function apiPlan(p:Plan | {message:string} |null):p is Plan {return Boolean(p && 'slots' in p && Array.isArray(p.slots));}
-function Button({children,onClick,variant='secondary',disabled=false,icon}:{children:React.ReactNode;onClick?:()=>void;variant?:'primary'|'secondary'|'ghost';disabled?:boolean;icon?:string}){return <button disabled={disabled} type="button" onClick={onClick} className={`btn btn-${variant}`}>{icon&&<Icon name={icon} size={16}/>}<span>{children}</span></button>}
-function Pill({children,tone='neutral'}:{children:React.ReactNode;tone?:'neutral'|'blue'|'green'|'amber'|'red'}){return <span className={`pill pill-${tone}`}>{children}</span>}
-function Panel({title,icon,children,action,extraClass=''}:{title:string;icon:string;children:React.ReactNode;action?:React.ReactNode;extraClass?:string}){return <section className={`panel ${extraClass}`}><div className="panel-header"><div className="panel-title"><Icon name={icon} size={18}/><h2>{title}</h2></div>{action}</div><div className="panel-content">{children}</div></section>}
-function Blank({title,detail}:{title:string;detail:string}){return <div className="blank"><Icon name="info" size={21}/><strong>{title}</strong><span>{detail}</span></div>}
-function SummaryCard({icon,label,value,note,onClick,tone='blue'}:{icon:string;label:string;value:string;note:string;onClick:()=>void;tone?:'blue'|'green'|'amber'}){return <button className="summary-card" type="button" onClick={onClick}><span className={`summary-icon tint-${tone}`}><Icon name={icon} size={21}/></span><span className="summary-copy"><span className="eyebrow">{label}</span><strong>{value}</strong><small>{note}</small></span><Icon className="summary-arrow" name="arrow" size={17}/></button>}
-function SecEventRow({item,onClick}:{item:Event;onClick?:()=>void}){
- return <button type="button" className="event-row" onClick={onClick}>
-  <span className="event-thumb"><Icon name={item.kind.toLowerCase().includes('vehicle')?'car':'camera'} size={22}/></span>
-  <span className="event-copy"><strong>{item.camera}</strong><small>{clock(item.timestamp)} · {item.kind.charAt(0).toUpperCase()+item.kind.slice(1)} detected</small></span>
-  <span className={`severity severity-${item.severity}`}>{item.severity}</span><Icon name="arrow" size={16}/>
- </button>
+
+const MODE_LABEL: Record<string, string> = {
+  ForceCharge: 'Force Charge',
+  SelfUse: 'Self-Use',
+  Feedin: 'Feed-in Priority',
+  Backup: 'Backup',
+};
+
+function londonClock(ms: number) {
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London', hourCycle: 'h23',
+  }).format(new Date(ms));
 }
-function Schedule({plan,compact=false}:{plan:Plan|null;compact?:boolean}){
- const slots=plan?.slots?.slice(0,48)||[];
- const groups: {mode:string;start:number;end:number}[]=[];
- if(slots.length){ slots.forEach((slot,i)=>{const previous=groups[groups.length-1];if(previous&&previous.mode===slot.mode_hint)previous.end=i+1;else groups.push({mode:slot.mode_hint,start:i,end:i+1});});}
- else groups.push({mode:'ForceCharge',start:0,end:11},{mode:'SelfUse',start:11,end:20},{mode:'Feedin',start:20,end:33},{mode:'SelfUse',start:33,end:47},{mode:'ForceCharge',start:47,end:48});
- return <div className="schedule-wrap"><div className="schedule-bar" role="img" aria-label="24-hour battery strategy preview">{groups.map((g,i)=>{const x=MODES[g.mode]||MODES.SelfUse;const pct=(g.end-g.start)*100/48;return <span title={`${x.label}, ${Math.floor(g.start/2).toString().padStart(2,'0')}:${g.start%2?'30':'00'} onwards`} className={`schedule-segment segment-${x.key}`} key={i} style={{width:`${pct}%`}}>{pct>(compact?17:12)?<span>{x.label}</span>:null}</span>})}</div><div className="time-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div><div className="schedule-footnote">{plan?`First 24 hours of a ${plan.horizon_hours}-hour ${plan.simulated?'simulation':'plan'} · Schedule hints only, not device commands`:'Illustrative timetable · Generate a simulation to view optimised slots'}</div></div>
+
+function londonParts(ms: number) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(ms));
+  const num = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? '0');
+  return { year: num('year'), month: num('month'), day: num('day'), hour: num('hour'), minute: num('minute'), second: num('second') };
 }
-function App(){
- const [page,setPage] = React.useState<Section>('overview');
- const [health,setHealth] = React.useState<Health|null>(null);
- const [config,setConfig] = React.useState<Config|null>(null);
- const [status,setStatus] = React.useState<Status|null>(null);
- const [generation,setGeneration] = React.useState<Generation|null>(null);
- const [plan,setPlan] = React.useState<Plan|null>(null);
- const [events,setEvents] = React.useState<Event[]>([]);
- const [history,setHistory] = React.useState<HistoryItem[]>([]);
- const [busy,setBusy] = React.useState(false);
- const [lastUpdated,setLastUpdated] = React.useState('');
- const [error,setError] = React.useState('');
- const [feedback,setFeedback] = React.useState('');
- const [filter,setFilter] = React.useState('all');
- const [search,setSearch] = React.useState('');
- const [menuOpen,setMenuOpen] = React.useState(false);
- const [now,setNow] = React.useState(new Date());
- const [chatInput,setChatInput] = React.useState('');
- const [messages,setMessages] = React.useState<{from:'user'|'agent';text:string}[]>([]);
- const [chatBusy,setChatBusy] = React.useState(false);
- const mode=health?.mode||'OFFLINE PREVIEW';
- const isDemo=mode==='DEMO'||!health;
- const isLive=Boolean(health?.ok);
- const displayEvents=events.length?events:isDemo?MOCK_EVENTS:[];
- const filteredEvents=displayEvents.filter(e=>filter==='all'||e.kind.toLowerCase().includes(filter));
- const statusNum=status?.soc_pct;
- const update = React.useCallback(async()=>{
-   const results=await Promise.allSettled([api.health(),api.config(),api.status(),api.generation(),api.plan(),api.events(),api.history()]);
-   if(results[0].status==='fulfilled'){setHealth(results[0].value);setError('');} else {setHealth(null);setError('Backend unavailable. Preview only — no live telemetry or controls.');}
-   if(results[1].status==='fulfilled')setConfig(results[1].value); else setConfig(null);
-   if(results[2].status==='fulfilled')setStatus(results[2].value); else setStatus(null);
-   if(results[3].status==='fulfilled')setGeneration(results[3].value); else setGeneration(null);
-   if(results[4].status==='fulfilled')setPlan(apiPlan(results[4].value)?results[4].value:null); else setPlan(null);
-   if(results[5].status==='fulfilled')setEvents(results[5].value); else setEvents([]);
-   if(results[6].status==='fulfilled')setHistory(results[6].value); else setHistory([]);
-   setLastUpdated(new Date().toISOString());
- },[]);
- React.useEffect(()=>{void update();const t=setInterval(()=>void update(),120000);const c=setInterval(()=>setNow(new Date()),30000);return()=>{clearInterval(t);clearInterval(c)}},[update]);
- const navigate=(destination:Section)=>{setPage(destination);setMenuOpen(false);window.scrollTo({top:0,behavior:'smooth'});};
- const generate=async()=>{setBusy(true);setFeedback('');try{const p=await api.generatePlan();setPlan(p);setFeedback('48-hour simulation saved. No device command was sent.');await update();setPage('energy');}catch(e){setFeedback(`Simulation unavailable: ${e instanceof Error?e.message:'Unknown error'}`);}finally{setBusy(false)}};
- const ask=async(proposed?:string)=>{const message=(proposed||chatInput).trim();if(!message||chatBusy)return;setMessages(old=>[...old,{from:'user',text:message}]);setChatInput('');setChatBusy(true);try{const reply=await api.chat(message);setMessages(old=>[...old,{from:'agent',text:reply.answer}]);}catch{setMessages(old=>[...old,{from:'agent',text:'The AI service is not connected yet. Set the OpenAI key and MCP services on your server to enable answers.'}]);}finally{setChatBusy(false)}};
- const resolveNotice=()=>navigate('security');
- const currentTitle=NAV.find(item=>item.id===page)?.label||'Overview';
- const cost=plan?money(plan.predicted_net_cost_gbp):'Not calculated';
- const statusValue=statusNum==null?'—':`${Math.round(statusNum)}%`;
- const securityValue=events.some(e=>e.severity==='high')?'Review event':events.length?'Events recorded':'No active feed';
- const date=new Intl.DateTimeFormat('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:'Europe/London'}).format(now);
- const time=new Intl.DateTimeFormat('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'}).format(now);
- const globalAsk=(ev:React.FormEvent)=>{ev.preventDefault();const q=search.trim();if(q){navigate('assistant');setChatInput(q);setSearch('')}};
- return <div className="app-shell">
-  <aside className="sidebar"><div className="brand"><span className="brand-mark"><Icon name="layers" size={19}/></span><span>Home AI <b>Control</b></span></div><div className="sidebar-kicker">WORKSPACE</div><nav className="side-nav" aria-label="Main navigation">{NAV.map(item=><button type="button" key={item.id} onClick={()=>navigate(item.id)} className={`nav-item ${page===item.id?'active':''}`}><Icon name={item.icon} size={19}/><span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><div className="device-chip"><span className={`dot ${isLive?'dot-green':'dot-amber'}`}/><div><b>{isLive?'API connected':'Offline preview'}</b><span>{isDemo?'Simulation / read only':'Live read-only'}</span></div></div><span className="sidebar-caption">Home AI System · v2.0</span></div></aside>
-  <div className="app-body">
-   <header className="topbar"><button type="button" className="mobile-brand" onClick={()=>navigate('overview')} aria-label="Go to overview"><span className="brand-mark"><Icon name="layers" size={18}/></span><b>Home AI</b></button><form className="global-search" onSubmit={globalAsk}><Icon name="search" size={18}/><input aria-label="Search or ask Home AI" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Ask Home AI or search your home..."/><span className="shortcut">↵</span></form><div className="top-right"><div className="top-status"><span className={`dot ${isLive?'dot-green':'dot-amber'}`}/><span>{isLive?'Connected':'Preview'}</span></div><button type="button" className="icon-btn refresh-desktop" onClick={()=>void update()} title="Refresh data"><Icon name="refresh" size={18}/></button><button type="button" className="icon-btn bell" onClick={resolveNotice} aria-label="Security events"><Icon name="bell" size={19}/>{events.some(e=>e.severity==='high')&&<i/>}</button><button type="button" className="avatar" onClick={()=>setMenuOpen(o=>!o)} aria-label="Open menu">H</button></div>{menuOpen&&<div className="overflow-menu">{NAV.slice(4).map(item=><button type="button" key={item.id} onClick={()=>navigate(item.id)}><Icon name={item.icon} size={17}/>{item.label}</button>)}</div>}</header>
-   <main className="workarea"><div className="content-frame">
-    <div className="page-header"><div><div className="tiny-label">HOME OPERATIONS <span className="tiny-sep">/</span> {currentTitle.toUpperCase()}</div><h1>{page==='overview'?getGreeting():currentTitle}</h1><p>{page==='overview'?'Your home intelligence, at a glance.':page==='energy'?'Understand and improve your battery dispatch economics.':page==='security'?'Only meaningful Protect events, without recreating your camera app.':page==='assistant'?'Ask about the home and understand AI decisions.':page==='automation'?'Scheduled jobs and event-driven workflows.':page==='history'?'An auditable record of simulations and decisions.':'Integration and safety configuration.'}</p></div><div className="page-date"><strong>{time}</strong><span>{date} · UK time</span></div></div>
-    <div className={`status-strip ${isDemo?'status-strip-demo':''}`}><Icon name={isDemo?'info':'shield'} size={16}/><span>{!isLive?'Offline UI preview — backend data unavailable.':isDemo?'DEMO MODE — sample data and simulations; device writes blocked.':'LIVE READ-ONLY — data from configured integrations; device writes blocked.'}</span>{lastUpdated&&<small>Checked {clock(lastUpdated)}</small>}</div>
-    {error&&health&&<p className="inline-error">{error}</p>}
-    {page==='overview'&&<div className="dashboard-grid"><div className="primary-column">
-     <section className="plan-hero"><div className="hero-heading"><span className="hero-icon"><Icon name="battery" size={24}/></span><div className="hero-heading-copy"><span className="eyebrow">NEXT BATTERY PLAN</span><h2>{plan?'Optimised strategy ready':'Night-time charging'}</h2><p>{plan?'48-hour simulation prepared for review':'Low-rate charging is a baseline option to evaluate'}</p></div></div><div className="hero-bottom"><div className="hero-status"><Icon name="clock" size={17}/><span>Daily planning · 22:00</span></div><span className="hero-value">{plan?`Projected net cost ${cost}`:'Awaiting simulation'}</span><Button icon="arrow" variant="primary" onClick={()=>navigate('energy')}>View plan</Button></div></section>
-     <div className="summary-grid"><SummaryCard label="Battery SOC" icon="battery" value={statusValue} note={status?'Reported by Fox ESS':'No live reading'} tone="blue" onClick={()=>navigate('energy')}/><SummaryCard label="Installed solar" icon="sun" value={config?.pv_kwp?`${config.pv_kwp.toFixed(2)} kWp`:'6.86 kWp'} note={generation?`Today ${kwh(generation.today_kwh)}`:'14 panels · east / south / west'} tone="amber" onClick={()=>navigate('energy')}/><SummaryCard label="Security" icon="shield" value={securityValue} note={events.length?`${events.length} recent events`:'See UniFi Protect for live status'} tone="green" onClick={()=>navigate('security')}/></div>
-     <Panel title="Needs your attention" icon="list" action={<button className="text-link" onClick={()=>navigate('history')}>Decision history <Icon name="arrow" size={15}/></button>}><div className="action-list"><button type="button" className="action-row" onClick={()=>navigate('energy')}><span className="row-icon tint-blue"><Icon name="bolt" size={20}/></span><span className="action-copy"><strong>{plan?'Review latest energy simulation':'Generate your first energy simulation'}</strong><small>{plan?'A 48-hour dispatch plan is available for review.':'Compare cheap night charging against PV export economics.'}</small></span><Pill tone="blue">Energy</Pill><Icon name="arrow" size={17}/></button><button type="button" className="action-row" onClick={()=>navigate('security')}><span className="row-icon tint-amber"><Icon name="shield" size={20}/></span><span className="action-copy"><strong>{events.length?'Review security events':'Connect UniFi Protect events'}</strong><small>{events.length?`${events.length} event records received.`:'Keep native Protect alerts; add AI classification later.'}</small></span><Pill tone={events.length?'amber':'neutral'}>{events.length?'Review':'Setup'}</Pill><Icon name="arrow" size={17}/></button></div></Panel>
-     <Panel title="Energy schedule" icon="calendar" action={<button type="button" className="text-link" onClick={()=>navigate('energy')}>View details <Icon name="arrow" size={15}/></button>}><Schedule plan={plan} compact/></Panel>
-     <Panel title="Security highlights" icon="shield" action={<button type="button" className="text-link" onClick={()=>navigate('security')}>All events <Icon name="arrow" size={15}/></button>}><div className="event-list compact-events">{displayEvents.slice(0,2).map(item=><SecEventRow key={item.id} item={item} onClick={()=>navigate('security')}/>)}</div>{isDemo&&!events.length&&<div className="demo-caption">Illustrative events, not your real camera footage.</div>}{!displayEvents.length&&<Blank title="No events received" detail="Set up an authenticated UniFi Protect webhook to populate this list."/>}</Panel>
-    </div><aside className="utility-column"><Panel title="Ask Home AI" icon="sparkles"><p className="assist-intro">Get explanations of charging plans, review events and compare decisions in natural language.</p><button className="assistant-suggestion" type="button" onClick={()=>{navigate('assistant');setChatInput('Why might overnight grid charging be more economical than solar charging?')}}>Why charge overnight? <Icon name="arrow" size={16}/></button><button className="assistant-suggestion" type="button" onClick={()=>{navigate('assistant');setChatInput('Summarise recent security events')}}>Summarise security events <Icon name="arrow" size={16}/></button><button className="assistant-open" onClick={()=>navigate('assistant')}>Open Assistant <Icon name="send" size={15}/></button></Panel><Panel title="System overview" icon="wifi"><div className="system-list">{[{name:'Home AI API',description:isLive?'Connected':'Not connected',connected:isLive},{name:'Fox ESS',description:status?'Telemetry received':'Not verified',connected:Boolean(status)},{name:'Octopus Energy',description:'Configuration not verified',connected:false},{name:'UniFi Protect',description:events.length?'Event data received':'Webhook not verified',connected:Boolean(events.length)},{name:'Cloud AI',description:'Check assistant configuration',connected:false}].map(item=><div className="system-item" key={item.name}><span className={`dot ${item.connected?'dot-green':'dot-muted'}`}/><span><strong>{item.name}</strong><small>{item.description}</small></span></div>)}</div></Panel><Panel title="Recent decisions" icon="history" action={<button className="text-link" onClick={()=>navigate('history')}>View all</button>}><div className="compact-history">{history.slice(0,3).map(item=><div className="decision-row" key={item.id}><span className="decision-icon"><Icon name="energy" size={17}/></span><span><strong>Energy simulation saved</strong><small>{shortDate(item.created_at)} · {money(item.net_cost_gbp)} net cost</small></span></div>)}{!history.length&&<Blank title="No decisions yet" detail="Run a simulation to start your decision log."/>}</div></Panel></aside></div>}
-    {page==='energy'&&<div className="detail-layout"><section className="panel energy-summary"><div className="energy-title-row"><div><span className="eyebrow">ENERGY OPTIMISATION</span><h2>48-hour battery strategy</h2><p>Minimise import cost, value PV export, and account for battery wear.</p></div><Button icon="refresh" variant="primary" disabled={busy} onClick={()=>void generate()}>{busy?'Calculating...':'Generate simulation'}</Button></div><div className="yield-line"><span>Generated today</span><strong>{kwh(generation?.today_kwh)}</strong><span>This month</span><strong>{kwh(generation?.month_kwh)}</strong><span>Lifetime</span><strong>{kwh(generation?.cumulative_kwh)}</strong></div><div className="energy-stat-grid"><div><span>Predicted import cost</span><strong>{plan?money(plan.predicted_import_cost_gbp):'—'}</strong></div><div><span>Export revenue</span><strong>{plan?money(plan.predicted_export_revenue_gbp):'—'}</strong></div><div><span>Battery wear estimate</span><strong>{plan?money(plan.predicted_degradation_cost_gbp):'—'}</strong></div><div><span>Projected net cost</span><strong>{cost}</strong></div></div><div className="mini-guard"><Icon name="lock" size={17}/><span>Read-only. Optimisation outputs are not executable Fox ESS instructions.</span></div></section>{feedback&&<div className="notice">{feedback}</div>}<Panel title="Daily schedule preview" icon="calendar"><Schedule plan={plan}/></Panel><Panel title="Operating assumptions" icon="info"><div className="settings-grid"><ConfigLine label="PV installed capacity" value={`${config?.pv_kwp??6.86} kWp`}/><ConfigLine label="Battery capacity" value={`${config?.battery_capacity_kwh??11} kWh`}/><ConfigLine label="Export enabled" value={config?.export_enabled?'Configured':'No / unverified'}/><ConfigLine label="Planning time" value="22:00 · Europe/London"/><ConfigLine label="Planning horizon" value="48h · 30-minute slots"/><ConfigLine label="Equipment control" value="Disabled by design"/></div></Panel><Panel title="Optimiser notes" icon="list">{plan?.notes?.length?<ul className="note-list">{plan.notes.slice(0,9).map((note,i)=><li key={i}>{note}</li>)}</ul>:<Blank title="No plan generated" detail="Run a simulation to see optimiser assumptions and result notes."/>}</Panel></div>}
-    {page==='security'&&<div className="detail-layout"><Panel title="Protect event inbox" icon="shield" action={<a href="https://unifi.ui.com/" target="_blank" rel="noopener noreferrer" className="text-link">Open UniFi <Icon name="external" size={15}/></a>}><div className="filterbar"><span>Event type</span>{['all','person','vehicle','package'].map(option=><button key={option} type="button" className={`filter ${filter===option?'selected':''}`} onClick={()=>setFilter(option)}>{option[0].toUpperCase()+option.slice(1)}</button>)}</div>{filteredEvents.length?<div className="event-list expanded-events">{filteredEvents.map(e=><div className="event-block" key={e.id}><SecEventRow item={e}/><p>{e.summary}</p><small>{shortDate(e.timestamp)} · Source: {e.source}</small></div>)}</div>:<Blank title="Nothing matches" detail="When Protect webhooks arrive, they will appear here."/>}{isDemo&&!events.length&&<p className="demo-caption">These two entries are UI samples. They do not represent real camera detections.</p>}</Panel><Panel title="How event analysis works" icon="camera"><div className="steps"><span>1. Protect detects activity</span><Icon name="arrow"/><span>2. Webhook stored safely</span><Icon name="arrow"/><span>3. Optional AI summary</span></div><p className="muted-paragraph">Recorded video stays in UniFi Protect. Automatic snapshot retrieval, cloud image analysis, and phone push alerts are not enabled in this starter.</p></Panel></div>}
-    {page==='assistant'&&<div className="chat-layout"><Panel title="Home AI Assistant" icon="sparkles" action={<Pill tone="blue">Read-only tools</Pill>}><div className="chat-area"><div className="chat-message agent-message">Ask about energy strategy, tariff economics, recorded events, or system state. I can explain results, but cannot change hardware settings.</div>{messages.map((m,i)=><div key={i} className={`chat-message ${m.from==='user'?'user-message':'agent-message'}`}>{m.text}</div>)}{chatBusy&&<div className="chat-message agent-message">Thinking…</div>}</div><form className="chat-form" onSubmit={e=>{e.preventDefault();void ask()}}><input value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="Ask a question about your home..." aria-label="Message Home AI"/><button type="submit" disabled={chatBusy||!chatInput.trim()} aria-label="Send message"><Icon name="send" size={19}/></button></form><p className="demo-caption">Answers require a configured OpenAI key and reachable read-only MCP servers. Do not paste API secrets in chat.</p></Panel><Panel title="Suggested questions" icon="list"><div className="suggestion-grid">{['Why is overnight charging a good default?','Compare grid charging with saving solar power','What is the latest optimisation result?','Summarise recent Protect events'].map(q=><button type="button" key={q} onClick={()=>setChatInput(q)}>{q}<Icon name="arrow" size={15}/></button>)}</div></Panel></div>}
-    {page==='automation'&&<div className="detail-layout"><Panel title="Active workflows" icon="automation"><div className="workflow-list">{[{icon:'calendar',title:'Daily energy planning',desc:'Scheduled at 22:00 local time. Creates a simulation, not a device command.',state:'Configured'},{icon:'camera',title:'Protect event intake',desc:'Token-authenticated webhook; processing and deduplication.',state:'Available'},{icon:'sparkles',title:'Cloud image analysis',desc:'Requires an explicit opt-in and a verified snapshot integration.',state:'Not connected'},{icon:'bolt',title:'Battery schedule write',desc:'Deliberately blocked pending KH7 verification and approval.',state:'Disabled'}].map(item=><div className="workflow-row" key={item.title}><span className="row-icon tint-blue"><Icon name={item.icon}/></span><div><strong>{item.title}</strong><small>{item.desc}</small></div><Pill tone={item.state==='Disabled'?'amber':'neutral'}>{item.state}</Pill></div>)}</div></Panel></div>}
-    {page==='history'&&<div className="detail-layout"><Panel title="Decision log" icon="history"><div className="history-list">{history.map(h=><div className="history-record" key={h.id}><span className="row-icon tint-blue"><Icon name="energy"/></span><div><strong>Energy optimisation</strong><small>{shortDate(h.created_at)} at {clock(h.created_at)} · {h.horizon_hours}h horizon · {h.source}</small></div><span className="history-cost">{money(h.net_cost_gbp)}</span></div>)}{!history.length&&<Blank title="No optimisation history" detail="Use Generate simulation in Energy to record a result."/>}</div></Panel></div>}
-    {page==='settings'&&<div className="detail-layout"><Panel title="System configuration" icon="settings"><div className="settings-grid"><ConfigLine label="Environment" value={mode}/><ConfigLine label="Service health" value={isLive?'API responding':'Offline'}/><ConfigLine label="Time zone" value={config?.timezone||'Europe/London'}/><ConfigLine label="Device writes" value="Disabled"/><ConfigLine label="Export" value={config?.export_enabled?'Enabled in configuration':'Not enabled'}/><ConfigLine label="Vision" value={config?.vision_enabled?'Opted in (pipeline incomplete)':'Disabled'}/></div></Panel><Panel title="Access and safety" icon="lock"><p className="muted-paragraph">The web UI should only be reachable through your home LAN or a trusted VPN such as UniFi Teleport. Before allowing other users access, put a trusted authentication gateway in front of the interface and enable HTTPS. Never place API credentials in browser code.</p><p className="muted-paragraph">FoxCloud remains your source of truth for device settings. UniFi Protect remains your recording and notification system.</p></Panel></div>}
-   </div></main>
-   <nav className="bottom-nav" aria-label="Mobile navigation">{NAV.slice(0,4).map(item=><button type="button" key={item.id} className={page===item.id?'selected':''} onClick={()=>navigate(item.id)}><Icon name={item.icon} size={20}/><span>{item.label}</span></button>)}<button type="button" onClick={()=>setMenuOpen(o=>!o)} className={['settings','history','automation'].includes(page)?'selected':''}><Icon name="menu" size={20}/><span>More</span></button></nav>
-  </div>
- </div>
+
+function londonMidnight(ms: number) {
+  const clock = londonParts(ms);
+  const shown = Date.UTC(clock.year, clock.month - 1, clock.day, clock.hour, clock.minute, clock.second);
+  return Date.UTC(clock.year, clock.month - 1, clock.day) - (shown - ms);
 }
-function ConfigLine({label,value}:{label:string;value:string}){return <div className="config-line"><span>{label}</span><strong>{value}</strong></div>}
-export default App;
+
+function nextLondonMidnight(ms: number) {
+  return londonMidnight(londonMidnight(ms) + 26 * 60 * 60 * 1000);
+}
+
+function timeRange(startMs: number, endMs: number, dayEnd: number) {
+  const end = endMs >= dayEnd - 1000 ? '23:59' : londonClock(endMs);
+  return `${londonClock(startMs)}–${end}`;
+}
+
+function samplePlan(startIso?: string): Plan {
+  const start = startIso ? new Date(startIso) : new Date();
+  const modes: Plan['slots'][number]['mode_hint'][] = [
+    ...Array(8).fill('ForceCharge'),
+    ...Array(12).fill('SelfUse'),
+    ...Array(12).fill('Feedin'),
+    ...Array(8).fill('Backup'),
+    ...Array(8).fill('SelfUse'),
+  ];
+  return {
+    id: 'sample',
+    created_at: new Date().toISOString(),
+    source: 'SAMPLE',
+    simulated: true,
+    forecast_quality: 'SAMPLE',
+    executable: false,
+    horizon_hours: 24,
+    step_minutes: 30,
+    predicted_import_cost_gbp: 0,
+    predicted_export_revenue_gbp: 0,
+    predicted_degradation_cost_gbp: 0,
+    predicted_net_cost_gbp: 0,
+    notes: [],
+    slots: modes.map((mode, index) => ({
+      start: new Date(start.getTime() + index * 30 * 60 * 1000).toISOString(),
+      soc_start_pct: 50,
+      soc_end_pct: 50,
+      import_kwh: 0,
+      export_kwh: 0,
+      grid_charge_kwh: 0,
+      solar_charge_kwh: 0,
+      battery_home_kwh: 0,
+      mode_hint: mode,
+    })),
+  };
+}
+
+function Schedule({ plan }: { plan: Plan }) {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const midnight = londonMidnight(now);
+  const dayEnd = nextLondonMidnight(now);
+  const dayMs = dayEnd - midnight;
+  const pct = (ms: number) => ((ms - midnight) / dayMs) * 100;
+  const step = (plan.step_minutes || 30) * 60 * 1000;
+  const spans: { mode: string; start: number; end: number }[] = [];
+  plan.slots.forEach((slot, index) => {
+    const start = new Date(slot.start).getTime();
+    const next = plan.slots[index + 1];
+    const nextStart = next ? new Date(next.start).getTime() : start + step;
+    const end = nextStart - start <= step + 1000 ? nextStart : start + step;
+    const from = Math.max(start, midnight);
+    const to = Math.min(end, dayEnd);
+    if (to <= from) return;
+    const previous = spans[spans.length - 1];
+    if (previous && previous.mode === slot.mode_hint && Math.abs(previous.end - from) < 1000) previous.end = to;
+    else spans.push({ mode: slot.mode_hint, start: from, end: to });
+  });
+  const ticks = Array.from({ length: 25 }, (_, hour) => ({
+    hour,
+    pct: (hour / 24) * 100,
+    label: hour % 3 === 0 ? (hour === 24 ? '23:59' : `${String(hour).padStart(2, '0')}:00`) : '',
+    sparse: hour % 6 !== 0,
+  }));
+  const callouts = spans.map((span, index) => {
+    const name = MODE_LABEL[span.mode] || span.mode;
+    const center = pct((span.start + span.end) / 2);
+    const align = center < 12 ? 'start' : center > 88 ? 'end' : 'mid';
+    return { ...span, name, center, align, side: index % 2 === 0 ? 'above' : 'below' };
+  });
+  const above = callouts.filter((item) => item.side === 'above');
+  const below = callouts.filter((item) => item.side === 'below');
+  const markers = (items: typeof callouts) => items.map((item) => (
+    <div key={`${item.mode}-${item.start}`} className={`callout ${item.side}`} style={{ left: `${item.center}%` }}>
+      {item.side === 'below' && <i className={`seg-${item.mode}`} />}
+      <span className={item.align}>{item.name}</span>
+      {item.side === 'above' && <i className={`seg-${item.mode}`} />}
+    </div>
+  ));
+  const nowPct = Math.min(100, Math.max(0, pct(now)));
+  const nowEdge = nowPct < 8 ? 'start' : nowPct > 92 ? 'end' : '';
+  return (
+    <div className="timeline">
+      {above.length > 0 && <div className="callouts">{markers(above)}</div>}
+      <div className="track">
+        <div className="schedule" role="img" aria-label={`Today's work modes, now ${londonClock(now)}`}>
+          {spans.map((span) => {
+            const name = MODE_LABEL[span.mode] || span.mode;
+            return (
+              <span
+                key={`${span.mode}-${span.start}`}
+                className={`seg seg-${span.mode}`}
+                style={{ left: `${pct(span.start)}%`, width: `${pct(span.end) - pct(span.start)}%` }}
+                title={`${name}, ${timeRange(span.start, span.end, dayEnd)}`}
+              />
+            );
+          })}
+        </div>
+        <div className={`now ${nowEdge}`} style={{ left: `${nowPct}%` }}>
+          <span>{londonClock(now)}</span>
+          <i />
+        </div>
+      </div>
+      {below.length > 0 && <div className="callouts below">{markers(below)}</div>}
+      <div className="ruler" aria-hidden="true">
+        {ticks.map((tick) => (
+          <div key={tick.hour} className={`tick ${tick.hour === 0 ? 'tick-start' : ''} ${tick.hour === 24 ? 'tick-end' : ''}`} style={{ left: `${tick.pct}%` }}>
+            <i />
+            {tick.label && <span className={tick.sparse ? 'sparse' : ''}>{tick.label}</span>}
+          </div>
+        ))}
+      </div>
+      <ul className="periods">
+        {spans.map((span) => (
+          <li key={`${span.mode}-${span.start}`}>
+            <i className={`swatch seg-${span.mode}`} />
+            <span>{timeRange(span.start, span.end, dayEnd)}</span>
+            <strong>{MODE_LABEL[span.mode] || span.mode}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function EventList({ events }: { events: Event[] }) {
+  return (
+    <div className="event-list">
+      {events.map((event) => (
+        <article key={event.id} className={`sev-${event.severity}`}>
+          {event.cover && <img src={event.cover} alt="" />}
+          <div>
+            <strong>{event.camera}</strong>
+            <span>{clock(event.timestamp)} · {event.kind.replaceAll('_', ' ')} · {event.severity}</span>
+            <p>{event.summary}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+export default function App() {
+  const [health, setHealth] = React.useState<Health | null>(null);
+  const [status, setStatus] = React.useState<Status | null>(null);
+  const [generation, setGeneration] = React.useState<Generation | null>(null);
+  const [plan, setPlan] = React.useState<Plan | null>(null);
+  const [events, setEvents] = React.useState<Event[]>([]);
+  const [offline, setOffline] = React.useState(false);
+  const [preview, setPreview] = React.useState(false);
+  const [chatInput, setChatInput] = React.useState('');
+  const [messages, setMessages] = React.useState<{ from: 'user' | 'agent'; text: string }[]>([]);
+  const [chatBusy, setChatBusy] = React.useState(false);
+
+  const update = React.useCallback(async () => {
+    const results = await Promise.allSettled([api.health(), api.status(), api.generation(), api.plan(), api.events()]);
+    if (results[0].status === 'fulfilled') {
+      setHealth(results[0].value);
+      setOffline(false);
+    } else {
+      setHealth(null);
+      setOffline(true);
+    }
+    setStatus(results[1].status === 'fulfilled' ? results[1].value : null);
+    setGeneration(results[2].status === 'fulfilled' ? results[2].value : null);
+    setPlan(results[3].status === 'fulfilled' && isPlan(results[3].value) ? results[3].value : null);
+    setEvents(results[4].status === 'fulfilled' ? results[4].value : []);
+  }, []);
+
+  React.useEffect(() => {
+    void update();
+    const timer = setInterval(() => void update(), 120000);
+    return () => clearInterval(timer);
+  }, [update]);
+
+  const ask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!message || chatBusy) return;
+    setMessages((old) => [...old, { from: 'user', text: message }]);
+    setChatInput('');
+    setChatBusy(true);
+    try {
+      const reply = await api.chat(message);
+      setMessages((old) => [...old, { from: 'agent', text: reply.answer }]);
+    } catch {
+      setMessages((old) => [...old, { from: 'agent', text: 'The assistant is unavailable. Check the OpenAI key and MCP services.' }]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
+  const thread = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    thread.current?.scrollTo({ top: thread.current.scrollHeight });
+  }, [messages, chatBusy]);
+
+  const soc = status ? `${Math.round(status.soc_pct)}%` : '—';
+  const live = Boolean(health?.ok);
+  const demo = health?.mode === 'DEMO';
+  const shownEvents = events.length ? events : SAMPLE_EVENTS;
+  const high = shownEvents.filter((event) => event.severity === 'high').length;
+  const people = shownEvents.filter((event) => event.kind.includes('person')).length;
+  const vehicles = shownEvents.filter((event) => event.kind.includes('vehicle')).length;
+
+  return (
+    <main className="home">
+      <header className="top">
+        <h1>Home</h1>
+        <div className="top-meta">
+          <span className={live ? 'live' : 'down'}>{offline ? 'Offline' : demo ? 'Demo data' : 'Live'}</span>
+          <button type="button" onClick={() => void update()}>Refresh</button>
+        </div>
+      </header>
+
+      {offline && <p className="banner">Backend is not reachable.</p>}
+
+      <section className="block" aria-label="Solar">
+        <p className="label">Solar</p>
+        <div className="card">
+          <div className="metrics">
+            <div className="primary"><span>Battery</span><strong>{soc}</strong></div>
+            <div className="primary"><span>Solar now</span><strong>{kw(status?.solar_kw)}</strong></div>
+            <div><span>Today</span><strong>{kwh(generation?.today_kwh)}</strong></div>
+            <div><span>This month</span><strong>{kwh(generation?.month_kwh)}</strong></div>
+          </div>
+          <p className="foot">
+            Load {kw(status?.load_kw)} · Grid {kw(status?.grid_kw)} · Battery {kw(status?.battery_kw)} · Lifetime {kwh(generation?.cumulative_kwh)}
+          </p>
+          <div className="split">
+            <div className="row">
+              <h2>Energy plan</h2>
+              <div className="actions">
+                <button type="button" onClick={() => setPreview((value) => !value)}>{preview ? 'Your plan' : 'Sample modes'}</button>
+              </div>
+            </div>
+            {preview || plan ? (
+              <>
+                <p className="hint">{preview ? 'Sample modes, to check the timeline. Not your tariff, and not sent to Fox.' : `Updated automatically at 22:00. Projected net cost ${money(plan!.predicted_net_cost_gbp)}. Simulation only, not sent to Fox.`}</p>
+                <Schedule plan={preview ? samplePlan(new Date(londonMidnight(Date.now())).toISOString()) : plan!} />
+              </>
+            ) : (
+              <p className="hint">No plan yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="block" aria-label="Security">
+        <p className="label">Security</p>
+        <div className="card">
+          <p className="foot security-line">{shownEvents.length} events · {high} high · {people} {people === 1 ? 'person' : 'people'} · {vehicles} {vehicles === 1 ? 'vehicle' : 'vehicles'}</p>
+          <EventList events={shownEvents} />
+        </div>
+      </section>
+
+      <section className="block" aria-label="Assistant">
+        <p className="label">Assistant</p>
+        <div className="card chat-card">
+          <div className="chat" ref={thread}>
+            {messages.length === 0 && <p className="hint">Ask about battery, solar, today’s generation, prices, or recorded events.</p>}
+            {messages.map((message, index) => (
+              <p key={index} className={message.from}>{message.text}</p>
+            ))}
+            {chatBusy && <p className="agent">Thinking…</p>}
+          </div>
+          <form onSubmit={(event) => void ask(event)}>
+            <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about your home" aria-label="Message" />
+            <button type="submit" className="primary" disabled={chatBusy || !chatInput.trim()}>Send</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  );
+}
